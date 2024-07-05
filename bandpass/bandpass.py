@@ -56,7 +56,7 @@ def tune():
     problem_size = (nr_stations*nr_polarizations, nr_channels)
 
     metrics = {}
-    metrics["GFLOP/s"] = lambda p: ((nr_samples_per_channel*nr_stations*nr_polarizations*nr_channels) / 1e9) / (p["time"] / 1e3)
+    metrics["GFLOP/s"] = lambda p: ((2*nr_samples_per_channel*nr_stations*nr_polarizations*nr_channels) / 1e9) / (p["time"] / 1e3)
 
     results, env = kernel_tuner.tune_kernel(kernel_name, kernel_string, problem_size,
                                             kernel_arguments, tune_params, restrictions=restrict,
