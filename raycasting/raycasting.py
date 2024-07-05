@@ -11,15 +11,17 @@
 
 """
 import os
+import sys
 
 from matplotlib import pyplot as plt
 import numpy as np
 import kernel_tuner as kt
 
+from kernel_tuner.observers.ncu import NCUObserver
 
 dir = os.path.dirname(os.path.abspath(__file__))
 
-def tune():
+def tune(use_profiler=False):
 
     kernel_name = "cuda_ray_marching"
     kernel_string = dir + "/raycasting.cu"
@@ -36,13 +38,20 @@ def tune():
 
     num_vals = 1e5
     num_casts = np.int32(num_vals)
-    vals = np.random.random((3,num_casts)).astype(np.float32)
-    vals[0,:] *= (width - 2.0)
-    vals[1,:] *= (height - 2.0)
-    vals[0,:] += 1.0
-    vals[1,:] += 1.0
-    vals[2,:] *= np.pi * 2.0
+
+    if not os.path.isfile("input_values.npy"):
+        vals = np.random.random((3,num_casts)).astype(np.float32)
+        vals[0,:] *= (width - 2.0)
+        vals[1,:] *= (height - 2.0)
+        vals[0,:] += 1.0
+        vals[1,:] += 1.0
+        vals[2,:] *= np.pi * 2.0
+        np.save("input_values", vals, allow_pickle=False)
+
+    vals = np.load("input_values.npy")
+
     ins = vals
+
     outs = np.zeros(num_casts, dtype=np.float32)
 
     max_range = np.float32(500)
@@ -52,10 +61,37 @@ def tune():
     tune_params = dict()
     tune_params["block_size_x"] = [32, 64, 128, 256, 512, 1024]
 
+    observers = []
+    metrics = {}
+
+    if use_profiler:
+        ncu_metrics = ["dram__bytes.sum",                                       # Counter         byte            # of bytes accessed in DRAM
+                       "dram__bytes_read.sum",                                  # Counter         byte            # of bytes read from DRAM
+                       "dram__bytes_write.sum",                                 # Counter         byte            # of bytes written to DRAM
+                       "smsp__sass_thread_inst_executed_op_fadd_pred_on.sum",   # Counter         inst            # of FADD thread instructions executed where all predicates were true
+                       "smsp__sass_thread_inst_executed_op_ffma_pred_on.sum",   # Counter         inst            # of FFMA thread instructions executed where all predicates were true
+                       "smsp__sass_thread_inst_executed_op_fmul_pred_on.sum",   # Counter         inst            # of FMUL thread instructions executed where all predicates were true
+                       "smsp__sass_thread_inst_executed_op_fp32_pred_on.sum",   # Counter         inst            # of single-precision floating-point thread instructions executed
+                                                                                                                  # where all predicates were true
+                      ]
+
+        ncuobserver = NCUObserver(metrics=ncu_metrics)
+        observers=[ncuobserver]
+
+        def total_fp32_flops(p):
+            return p["smsp__sass_thread_inst_executed_op_fp32_pred_on.sum"]
+
+        metrics = dict()
+        metrics["GFLOP/s"] = lambda p: (total_fp32_flops(p) / 1e9) / (p["time"]/1e3)
+        metrics["total GFLOP/s"] = lambda p: total_fp32_flops(p)
+
     # call the tuner
-    kt.tune_kernel(kernel_name, kernel_string, num_casts, args, tune_params)
+    kt.tune_kernel(kernel_name, kernel_string, num_casts, args, tune_params, metrics=metrics, observers=observers)
 
 
 
 if __name__ == "__main__":
-    tune()
+    if len(sys.argv) > 0 and "--use_profiler" in sys.argv:
+        tune(use_profiler=True)
+    else:
+        tune()
